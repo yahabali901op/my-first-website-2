@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AnimeWorld — Anime Movies</title>
+<style>
+:root{color-scheme:dark;--bg:#080b13;--panel:#111827;--red:#ff354b;--muted:#a7b2c8}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f4f6ff;font-family:Arial,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 5%;background:#0b101c;border-bottom:1px solid #263044}
+.logo{font-size:23px;font-weight:800}.logo span{color:var(--red)}a{color:#8bc8ff}
+.hero{padding:45px 6%;background:radial-gradient(ellipse at 80% 20%,#6d172c,transparent 50%),linear-gradient(120deg,#151b30,#080b13)}
+.hero h1{font-size:clamp(30px,6vw,54px);margin:0 0 10px}.hero p{max-width:620px;color:var(--muted);line-height:1.6}
+main{padding:24px 5%}.controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+input,select,button{padding:11px;border:1px solid #344158;border-radius:9px;background:#172033;color:#fff;font-size:15px}
+input{min-width:0;flex:1}button{cursor:pointer}.primary{background:var(--red);border-color:var(--red);font-weight:bold}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:16px}
+.card{overflow:hidden;border:1px solid #263044;background:var(--panel);border-radius:12px}
+.poster{height:210px;background:linear-gradient(145deg,#51204e,#182c52,#10121a);display:flex;align-items:center;justify-content:center;font-size:64px;background-size:cover;background-position:center}
+.info{padding:12px}.info h3{margin:0 0 8px;font-size:16px}.meta{color:var(--muted);font-size:12px;margin-bottom:10px}.info p{font-size:13px;line-height:1.45;color:#d1d8e7}
+.info button{width:100%}.notice{margin-top:25px;padding:15px;border-radius:10px;background:#111827;color:var(--muted);line-height:1.6}
+footer{text-align:center;padding:25px;color:var(--muted)}
+#player{display:none;position:fixed;inset:0;background:#000e;z-index:10;padding:16px;align-items:center;justify-content:center}
+.playerbox{width:min(900px,100%);background:#111827;padding:16px;border-radius:12px}.playerbox video{width:100%;max-height:70vh;background:#000}
+.close{float:right}#playerTitle{clear:both;padding-top:8px}
+</style>
+</head>
+<body>
+<header><div class="logo">Anime<span>World</span></div><a href="./admin.html">Admin login</a></header>
+<section class="hero"><p style="color:#ff697b;font-weight:bold">ANIME MOVIE COLLECTION</p><h1>Enter the Anime World</h1><p>Discover animated adventures, explore genres, and watch movies shared by the site administrator.</p></section>
+<main>
+<h2>Movies</h2>
+<div class="controls"><input id="search" placeholder="Search movies..." aria-label="Search movies"><select id="genre" aria-label="Filter genre"><option>All genres</option><option>Action</option><option>Adventure</option><option>Fantasy</option><option>Drama</option><option>Comedy</option><option>Sci-Fi</option><option>Other</option></select></div>
+<div id="status">Loading movies…</div><div class="grid" id="grid"></div>
+<div class="notice">Only movies that the administrator is authorized to distribute should be uploaded. This site does not supply movie files.</div>
+</main>
+<div id="player"><div class="playerbox"><button class="close" id="closePlayer">Close ✕</button><h2 id="playerTitle">Movie</h2><video id="video" controls playsinline></video><p id="playerError" class="meta"></p></div></div>
+<footer>AnimeWorld · Watch responsibly</footer>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { firebaseConfig } from "./firebase.js";
+
+const statusEl=document.querySelector("#status"), grid=document.querySelector("#grid");
+let movies=[];
+try {
+  const app=initializeApp(firebaseConfig);
+  const db=getFirestore(app);
+  const snap=await getDocs(query(collection(db,"movies"),where("published","==",true)));
+  movies=snap.docs.map(d=>({id:d.id,...d.data()}));
+  statusEl.textContent=movies.length ? "" : "No published movies yet.";
+  render();
+} catch(e) {
+  statusEl.textContent="Could not load movies. Check firebase.js and Firestore rules.";
+  console.error(e);
+}
+function render(){
+  const term=document.querySelector("#search").value.trim().toLowerCase();
+  const genre=document.querySelector("#genre").value;
+  const filtered=movies.filter(m=>(m.title||"").toLowerCase().includes(term) &&
+    (genre==="All genres" || m.genre===genre));
+  grid.replaceChildren();
+  if(!filtered.length && movies.length) statusEl.textContent="No matching movies found.";
+  else if(filtered.length) statusEl.textContent="";
+  for(const m of filtered){
+    const card=document.createElement("article"); card.className="card";
+    const poster=document.createElement("div"); poster.className="poster";
+    if(m.posterUrl){poster.style.backgroundImage=`linear-gradient(#0002,#0005),url("${m.posterUrl.replace(/"/g,"%22")}")`;poster.textContent="";}
+    else poster.textContent=m.symbol||"🎬";
+    const info=document.createElement("div");info.className="info";
+    const title=document.createElement("h3");title.textContent=m.title||"Untitled";
+    const meta=document.createElement("div");meta.className="meta";meta.textContent=`${m.year||""} · ${m.genre||"Other"}`;
+    const desc=document.createElement("p");desc.textContent=m.description||"";
+    const btn=document.createElement("button");btn.className="primary";btn.textContent="▶ Watch";
+    btn.onclick=()=>play(m);
+    info.append(title,meta,desc,btn);card.append(poster,info);grid.append(card);
+  }
+}
+document.querySelector("#search").addEventListener("input",render);
+document.querySelector("#genre").addEventListener("change",render);
+function play(m){
+  const video=document.querySelector("#video");
+  document.querySelector("#playerTitle").textContent=m.title||"Movie";
+  document.querySelector("#playerError").textContent="";
+  video.src=m.videoUrl;document.querySelector("#player").style.display="flex";
+  video.play().catch(()=>document.querySelector("#playerError").textContent="Playback failed. This video host may not support direct embedding.");
+}
+function closePlayer(){const v=document.querySelector("#video");v.pause();v.removeAttribute("src");v.load();document.querySelector("#player").style.display="none";}
+document.querySelector("#closePlayer").onclick=closePlayer;
+document.querySelector("#player").addEventListener("click",e=>{if(e.target.id==="player")closePlayer()});
+</script>
+</body>
+</html>

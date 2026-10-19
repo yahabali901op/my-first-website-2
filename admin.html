@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AnimeWorld — Admin</title>
+<style>
+body{margin:0;background:#080b13;color:#f4f6ff;font-family:Arial,sans-serif;padding:20px}
+main{max-width:720px;margin:20px auto;background:#111827;padding:22px;border:1px solid #263044;border-radius:14px}
+h1 span{color:#ff354b}p{color:#a7b2c8;line-height:1.5}
+label{display:block;margin:13px 0 6px}input,select,textarea,button{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #344158;background:#172033;color:white;font-size:15px}
+textarea{min-height:85px}button{cursor:pointer;background:#ff354b;border-color:#ff354b;font-weight:bold;margin-top:12px}
+.secondary{background:#263044;border-color:#46536a}section{border-top:1px solid #263044;margin-top:24px;padding-top:16px}
+.hidden{display:none}.item{padding:12px;background:#0b101c;border-radius:8px;margin:10px 0;overflow-wrap:anywhere}.item button{margin-top:8px}
+a{color:#8bc8ff}
+</style>
+</head>
+<body><main>
+<h1>Anime<span>World</span> Admin</h1>
+<p>Sign in with the administrator account created in Firebase Authentication. Upload only videos you have permission to distribute.</p>
+<div id="authBox">
+<label for="email">Admin email</label><input id="email" type="email" autocomplete="username">
+<label for="password">Password</label><input id="password" type="password" autocomplete="current-password">
+<button id="login">Sign in</button>
+</div>
+<div id="panel" class="hidden">
+<p id="signedIn"></p><button class="secondary" id="logout">Sign out</button>
+<section><h2>Upload and publish a movie</h2>
+<label for="title">Movie title *</label><input id="title" maxlength="120" required>
+<label for="year">Year</label><input id="year" type="number" min="1900" max="2100">
+<label for="genre">Genre</label><select id="genre"><option>Action</option><option>Adventure</option><option>Fantasy</option><option>Drama</option><option>Comedy</option><option>Sci-Fi</option><option>Other</option></select>
+<label for="description">Description</label><textarea id="description" maxlength="1000"></textarea>
+<label for="poster">Poster image URL (optional)</label><input id="poster" type="url" placeholder="https://...">
+<label for="movieFile">Movie video file *</label><input id="movieFile" type="file" accept="video/mp4,video/webm,video/ogg,.mp4,.webm,.ogv">
+<p>Large videos can take a long time and may exceed storage or bandwidth limits. Use a supported video format, such as MP4 (H.264/AAC).</p>
+<label><input id="publish" type="checkbox" checked style="width:auto"> Publish immediately after upload</label>
+<button id="upload">Upload movie</button><p id="uploadStatus" role="status"></p>
+</section>
+<section><h2>Existing movies</h2><div id="movieList">Loading…</div></section>
+</div>
+<p><a href="./index.html">← Public website</a></p>
+</main>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,addDoc,getDocs,doc,deleteDoc,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getStorage,ref,uploadBytesResumable,getDownloadURL,deleteObject} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import {firebaseConfig,ADMIN_UID} from "./firebase.js";
+
+const app=initializeApp(firebaseConfig), auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
+const $=id=>document.getElementById(id);
+let currentUser=null;
+$("login").onclick=async()=>{
+  $("uploadStatus").textContent="";
+  try{await signInWithEmailAndPassword(auth,$("email").value.trim(),$("password").value);}
+  catch(e){$("uploadStatus").textContent="Sign-in failed. Check your email and password.";console.error(e);}
+};
+$("logout").onclick=()=>signOut(auth);
+onAuthStateChanged(auth,async user=>{
+  currentUser=user;
+  const allowed=!!user && user.uid===ADMIN_UID && ADMIN_UID!=="REPLACE_WITH_ADMIN_UID";
+  $("authBox").classList.toggle("hidden",allowed);
+  $("panel").classList.toggle("hidden",!allowed);
+  if(user && !allowed){$("uploadStatus").textContent="This account is not configured as the administrator. Sign out and check ADMIN_UID in firebase.js.";await signOut(auth);return;}
+  if(allowed){$("signedIn").textContent="Signed in as "+user.email;await loadMovies();}
+});
+$("upload").onclick=async()=>{
+  if(!currentUser || currentUser.uid!==ADMIN_UID){$("uploadStatus").textContent="Admin access required.";return;}
+  const title=$("title").value.trim(), file=$("movieFile").files[0];
+  if(!title || !file){$("uploadStatus").textContent="Enter a title and choose a video file.";return;}
+  if(!file.type.startsWith("video/")){$("uploadStatus").textContent="Choose a valid video file.";return;}
+  if(file.size>500*1024*1024){$("uploadStatus").textContent="This starter limits uploads to 500 MB. Use a suitable video host for larger files.";return;}
+  const btn=$("upload");btn.disabled=true;
+  try{
+    const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+    const path=`movies/${Date.now()}_${safeName}`;
+    const task=uploadBytesResumable(ref(storage,path),file,{contentType:file.type});
+    await new Promise((resolve,reject)=>task.on("state_changed",
+      s=>$("uploadStatus").textContent=`Uploading… ${Math.round(s.bytesTransferred/s.totalBytes*100)}%`,
+      reject,resolve));
+    const videoUrl=await getDownloadURL(task.snapshot.ref);
+    await addDoc(collection(db,"movies"),{
+      title,year:Number($("year").value)||null,genre:$("genre").value,
+      description:$("description").value.trim(),posterUrl:$("poster").value.trim(),
+      videoUrl,storagePath:path,published:$("publish").checked,
+      createdAt:serverTimestamp(),createdBy:currentUser.uid
+    });
+    $("uploadStatus").textContent="Upload complete. Movie saved.";
+    $("title").value="";$("year").value="";$("description").value="";
+    $("poster").value="";$("movieFile").value="";
+    await loadMovies();
+  }catch(e){console.error(e);$("uploadStatus").textContent="Upload failed. Check Firebase setup, rules, quota, and connection.";}
+  finally{btn.disabled=false;}
+};
+async function loadMovies(){
+  const list=$("movieList");list.textContent="Loading…";
+  try{
+    const snap=await getDocs(collection(db,"movies"));list.replaceChildren();
+    if(snap.empty){list.textContent="No movies uploaded yet.";return;}
+    snap.forEach(d=>{
+      const m=d.data(), div=document.createElement("div");div.className="item";
+      const title=document.createElement("strong");title.textContent=m.title||"Untitled";
+      const status=document.createElement("p");status.textContent=m.published?"Published":"Draft";
+      const toggle=document.createElement("button");toggle.className="secondary";toggle.textContent=m.published?"Unpublish":"Publish";
+      toggle.onclick=async()=>{try{const {updateDoc}=await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");await updateDoc(doc(db,"movies",d.id),{published:!m.published});await loadMovies();}catch(e){alert("Could not update movie.");}};
+      const del=document.createElement("button");del.textContent="Delete movie";
+      del.onclick=async()=>{if(!confirm("Delete this movie record and its uploaded video?"))return;try{await deleteDoc(doc(db,"movies",d.id));if(m.storagePath)await deleteObject(ref(storage,m.storagePath));await loadMovies();}catch(e){alert("Delete failed. Check permissions and storage path.");}};
+      div.append(title,status,toggle,del);list.append(div);
+    });
+  }catch(e){console.error(e);list.textContent="Could not load movies. Check Firestore rules.";}
+}
+</script>
+</body></html>

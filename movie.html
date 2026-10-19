@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnimeVerse</title>
+<style>
+:root{--bg:#090b12;--card:#151925;--pink:#ff3864;--text:#f4f5fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+header{padding:20px;background:#10131d;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.logo{font-size:23px;font-weight:bold;color:var(--pink)}
+button,.btn{background:var(--pink);color:white;border:0;border-radius:7px;padding:11px 15px;cursor:pointer;font-weight:bold}
+input,select{padding:12px;border-radius:7px;border:1px solid #35394b;background:#171b28;color:white;width:100%;margin:6px 0}
+.hero{padding:55px 22px;background:linear-gradient(90deg,#090b12,#17142b,#090b12)}
+.hero h1{font-size:clamp(30px,6vw,52px);margin:5px 0}
+.hero p{color:#c1c4d1;line-height:1.6}
+main{padding:20px;max-width:1200px;margin:auto}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.toolbar input{flex:1;min-width:180px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:15px}
+.card{background:var(--card);border-radius:12px;overflow:hidden}
+.poster{height:210px;background:#24283b;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:45px;overflow:hidden}
+.poster img{width:100%;height:100%;object-fit:cover}
+.info{padding:12px}
+.info h3{margin:0 0 8px;font-size:16px}
+.small{font-size:12px;color:#b6b9c8}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.actions a,.actions button{font-size:12px;padding:9px;text-decoration:none}
+.panel{background:var(--card);border:1px solid #292e40;padding:18px;border-radius:12px;margin:25px 0}
+.hidden{display:none!important}
+.notice{color:#b9c0d4;font-size:13px;line-height:1.5}
+footer{text-align:center;padding:25px;color:#9da2b6}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">AnimeVerse ✦</div>
+  <button id="loginBtn">Admin Login</button>
+  <button id="logoutBtn" class="hidden">Logout</button>
+</header>
+
+<section class="hero">
+  <h1>Enter the Anime World</h1>
+  <p>Discover anime movies, explore your favorites, and watch official trailers.</p>
+  <a href="#movies" class="btn" style="display:inline-block;text-decoration:none">Explore Movies</a>
+</section>
+
+<main>
+  <h2 id="movies">🎬 Anime Collection</h2>
+  <div class="toolbar">
+    <input id="search" placeholder="Search anime movies...">
+    <select id="category">
+      <option value="All">All categories</option>
+      <option>Action</option><option>Adventure</option>
+      <option>Fantasy</option><option>Romance</option>
+    </select>
+  </div>
+  <p id="status" class="notice">Loading movies...</p>
+  <div class="grid" id="grid"></div>
+
+  <section id="loginPanel" class="panel hidden">
+    <h2>Admin Login</h2>
+    <input id="email" type="email" placeholder="Admin email">
+    <input id="password" type="password" placeholder="Password">
+    <button id="signIn">Sign In</button>
+    <p class="notice">Use the email and password of your Firebase Authentication admin account.</p>
+  </section>
+
+  <section id="adminPanel" class="panel hidden">
+    <h2>⚙️ Admin Dashboard</h2>
+    <p class="notice">Only the configured admin UID can add movies.</p>
+    <input id="title" placeholder="Movie title">
+    <select id="genre">
+      <option>Action</option><option>Adventure</option>
+      <option>Fantasy</option><option>Romance</option>
+    </select>
+    <input id="poster" type="url" placeholder="Poster image URL (optional)">
+    <input id="trailer" type="url" placeholder="Official YouTube trailer URL (optional)">
+    <label for="movieFile">Authorized movie video file (optional)</label>
+    <input id="movieFile" type="file" accept="video/mp4,video/webm">
+    <button id="addMovie">Publish Movie</button>
+    <p id="uploadStatus" class="notice"></p>
+  </section>
+</main>
+
+<footer>AnimeVerse · Share and stream only content you are authorized to distribute.</footer>
+
+<script type="module">
+import { initializeApp } from
+  "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import {
+  getFirestore, collection, addDoc, getDocs, query, orderBy, deleteDoc, doc
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
+
+// Replace these values with your Firebase project settings.
+const firebaseConfig = {
+  apiKey: "PASTE_YOUR_FIREBASE_WEB_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_FIREBASE_APP_ID"
+};
+
+// Copy your admin user's UID from Firebase Authentication.
+const ADMIN_UID = "REPLACE_WITH_ADMIN_UID";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+const $ = id => document.getElementById(id);
+let movies = [];
+let isAdmin = false;
+
+function safeUrl(value, kind) {
+  try {
+    const u = new URL(value);
+    if (kind === "image") return ["https:", "http:"].includes(u.protocol) ? u.href : "";
+    if (kind === "video") return ["https:", "http:"].includes(u.protocol) ? u.href : "";
+    if (kind === "trailer" && ["youtube.com","www.youtube.com","youtu.be","www.youtube-nocookie.com"].includes(u.hostname)) {
+      return u.href;
+    }
+  } catch {}
+  return "";
+}
+
+function esc(s="") {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[c]);
+}
+
+function render() {
+  const search = $("search").value.toLowerCase().trim();
+  const category = $("category").value;
+  const filtered = movies.filter(m =>
+    (m.title || "").toLowerCase().includes(search) &&
+    (category === "All" || m.genre === category)
+  );
+
+  $("grid").innerHTML = filtered.map(m => {
+    const poster = safeUrl(m.poster || "", "image");
+    const trailer = safeUrl(m.trailer || "", "trailer");
+    const video = safeUrl(m.videoUrl || "", "video");
+    return `<article class="card">
+      <div class="poster">${poster
+        ? `<img src="${esc(poster)}" alt="${esc(m.title)} poster" loading="lazy">`
+        : "🎌"}</div>
+      <div class="info">
+        <h3>${esc(m.title)}</h3>
+        <div class="small">${esc(m.genre || "Anime")}</div>
+        <div class="actions">
+          ${video ? `<a class="btn" href="${esc(video)}" target="_blank" rel="noopener">Watch</a>` : ""}
+          ${trailer ? `<a class="btn" href="${esc(trailer)}" target="_blank" rel="noopener">Trailer</a>` : ""}
+          ${isAdmin ? `<button data-delete="${esc(m.id)}">Delete</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+  }).join("");
+
+  $("status").textContent = filtered.length
+    ? `${filtered.length} movie(s) found`
+    : "No movies found. Admin can add authorized movies after login.";
+}
+
+async function loadMovies() {
+  try {
+    const result = await getDocs(query(collection(db, "movies"), orderBy("createdAt", "desc")));
+    movies = result.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  } catch (e) {
+    $("status").textContent = "Could not load movies. Check Firebase setup and Firestore rules.";
+    console.error(e);
+  }
+}
+
+$("search").addEventListener("input", render);
+$("category").addEventListener("change", render);
+
+$("loginBtn").onclick = () => $("loginPanel").classList.toggle("hidden");
+
+$("signIn").onclick = async () => {
+  try {
+    await signInWithEmailAndPassword(auth, $("email").value, $("password").value);
+  } catch (e) {
+    alert("Login failed: " + e.message);
+  }
+};
+
+$("logoutBtn").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  isAdmin = !!user && user.uid === ADMIN_UID;
+  $("adminPanel").classList.toggle("hidden", !isAdmin);
+  $("logoutBtn").classList.toggle("hidden", !user);
+  $("loginBtn").classList.toggle("hidden", !!user);
+  $("loginPanel").classList.add("hidden");
+
+  if (user && !isAdmin) {
+    alert("This account is not an authorized admin.");
+  }
+  render();
+});
+
+$("addMovie").onclick = async () => {
+  if (!auth.currentUser || auth.currentUser.uid !== ADMIN_UID) {
+    alert("Admin access required.");
+    return;
+  }
+
+  const title = $("title").value.trim();
+  const genre = $("genre").value;
+  const poster = $("poster").value.trim();
+  const trailer = $("trailer").value.trim();
+  const file = $("movieFile").files[0];
+  const msg = $("uploadStatus");
+
+  if (!title) return alert("Enter a movie title.");
+  if (poster && !safeUrl(poster, "image")) return alert("Enter a valid poster URL.");
+  if (trailer && !safeUrl(trailer, "trailer")) return alert("Use an official YouTube trailer URL.");
+  if (file && !["video/mp4", "video/webm"].includes(file.type)) {
+    return alert("Choose an MP4 or WebM video.");
+  }
+  if (file && file.size > 100 * 1024 * 1024) {
+    return alert("This example limits uploads to 100 MB. Use a suitable authorized video host for larger files.");
+  }
+
+  $("addMovie").disabled = true;
+  msg.textContent = "Publishing...";
+
+  try {
+    let videoUrl = "";
+    let storagePath = "";
+
+    if (file) {
+      storagePath = "movies/" + auth.currentUser.uid + "/" + crypto.randomUUID() + "-" + file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const fileRef = ref(storage, storagePath);
+      await uploadBytes(fileRef, file, { contentType: file.type });
+      videoUrl = await getDownloadURL(fileRef);
+    }
+
+    await addDoc(collection(db, "movies"), {
+      title, genre,
+      poster: poster ? safeUrl(poster, "image") : "",
+      trailer: trailer ? safeUrl(trailer, "trailer") : "",
+      videoUrl, storagePath,
+      createdAt: Date.now(),
+      ownerUid: auth.currentUser.uid
+    });
+
+    $("title").value = "";
+    $("poster").value = "";
+    $("trailer").value = "";
+    $("movieFile").value = "";
+    msg.textContent = "Movie published!";
+    await loadMovies();
+  } catch (e) {
+    console.error(e);
+    msg.textContent = "Upload failed: " + e.message;
+  } finally {
+    $("addMovie").disabled = false;
+  }
+};
+
+$("grid").addEventListener("click", async e => {
+  const id = e.target.dataset.delete;
+  if (!id || !isAdmin || !auth.currentUser || auth.currentUser.uid !== ADMIN_UID) return;
+  if (!confirm("Delete this movie?")) return;
+
+  const movie = movies.find(m => m.id === id);
+  try {
+    if (movie?.storagePath) {
+      await deleteObject(ref(storage, movie.storagePath)).catch(() => {});
+    }
+    await deleteDoc(doc(db, "movies", id));
+    await loadMovies();
+  } catch (err) {
+    alert("Delete failed: " + err.message);
+  }
+});
+
+await loadMovies();
+</script>
+</body>
+</html>
